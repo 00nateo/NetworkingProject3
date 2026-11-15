@@ -1,0 +1,233 @@
+CS 4254 Fall 2026 Project 3: Web Crawler
+Project 3: Web Crawler
+CS 4254 Computer Network Architecture and Programming — Fall 2026
+Released Monday, November 9, 2026
+This project is due at 11:59pm on Friday, November 20, 2026.
+Work in groups of two. Each student has their own Fakebook account.
+1 Description
+This assignment is intended to familiarize you with the HTTP protocol. HTTP is (arguably) the
+most important application-level protocol on the Internet today: the Web runs on HTTP, and an
+enormous number of other applications and APIs (streaming video, mobile apps, social-network and
+cloud APIs, . . . ) use HTTP as well.
+Your goal in this assignment is to implement a web crawler that gathers data from a fake social
+networking website that we have set up for you, called Fakebook:
+http://sprinter2.cs.vt.edu/fakebook/
+2 What is a Web Crawler?
+A web crawler (sometimes known as a robot, a spider, or a screen scraper) is a piece of software that
+automatically gathers and traverses documents on the web. For example, suppose you have a crawler
+and you tell it to start at www.wikipedia.org. The software will first download the Wikipedia
+homepage, then parse the HTML and locate all hyperlinks (i.e., anchor tags) embedded in the page.
+The crawler then downloads all the HTML pages specified by the URLs on the homepage and parses
+them looking for more hyperlinks. This process continues until all of the pages on Wikipedia are
+downloaded and parsed.
+Web crawlers are a fundamental component of today’s web. For example, Googlebot is Google’s
+web crawler: it constantly scours the web, downloading pages in search of new and updated content,
+and this data forms the backbone of Google’s search engine.
+3 Fakebook
+We have set up a fake social network for this project called Fakebook. Fakebook is a very simple
+website that consists of the following pages:
+• Homepage: displays some welcome text, as well as links to several random Fakebook users’
+profiles.
+• Personal Profiles: each Fakebook user has a profile page that includes their name, some
+basic demographic information, and a link to their list of friends.
+• Friends List: each Fakebook user is friends with one or more other Fakebook users. This
+page lists the user’s friends and has links to their profiles. Long friend lists are split across
+several pages.
+1
+CS 4254 Fall 2026 Project 3: Web Crawler
+To browse Fakebook, you must first log in with a username and password. We will email each
+student a unique username and password. Each group member has a separate account (and
+separate secret flags, see Section 5).
+Reaching Fakebook. Fakebook runs on a server inside the Virginia Tech network and is not
+reachable from the public Internet. You can reach it:
+• from any machine on campus, including the CS rlogin cluster (rlogin.cs.vt.edu), or
+• from your own computer off campus after connecting to the VT Remote Access VPN (see
+4help.vt.edu for the current VPN client and instructions; all enrolled students are authorized
+to use it).
+Your browser’s developer tools (Network tab) are a great way to see exactly what HTTP requests
+and responses a real browser exchanges with Fakebook.
+WARNING: DO NOT TEST YOUR CRAWLERS ON PUBLIC WEBSITES.
+Many web server administrators view crawlers as a nuisance, and they get very upset if they
+see strange crawlers traversing their sites. Only test your crawler against Fakebook.
+4 High Level Requirements
+Your goal is to collect five secret flags that have been hidden somewhere on the Fakebook website.
+The flags are unique for each student, and the pages that contain the flags are different for each
+student. Since you have no idea which pages the secret flags will appear on, and the Fakebook site
+is large (thousands of pages), your only option is to write a web crawler that will traverse Fakebook
+and locate your flags.
+Your web crawler must execute on the command line using the following syntax:
+./webcrawler [username] [password]
+Your crawler uses the username and password to log in to Fakebook. You may assume that the
+home page for Fakebook is available at
+http://sprinter2.cs.vt.edu/fakebook/
+and that the log-in form for Fakebook is available at
+http://sprinter2.cs.vt.edu/accounts/login/?next=/fakebook/
+Your web crawler should print exactly five lines of output to standard output: the five secret
+flags discovered during the crawl, one per line, and nothing else (send any debugging or progress
+output to standard error). If your program encounters an unrecoverable error, it may print an error
+message before terminating.
+5 Secret Flag Structure
+Secret flags may be hidden on any page on Fakebook, and their exact location on each page may be
+different. Each secret flag is a 64-character long sequence of random alphanumerics. All secret flags
+will appear in the following format (which makes them easy to identify):
+2
+CS 4254 Fall 2026 Project 3: Web Crawler
+<h2 class="secret_flag" style="color:red">FLAG:
+64-characters-of-random-alphanumerics</h2>
+6 HTTP and (Il)Legal Libraries
+Part of the challenge of this assignment is that all HTTP request and response code must
+be written by you, from scratch. In other words, you need to implement the ability to send
+HTTP/1.1 messages and parse HTTP responses. You may use any available libraries to create
+socket connections, parse URLs, decompress data, and parse HTML. However, you may not use
+any libraries/modules/etc. that implement HTTP or manage cookies for you.
+Language Allowed (examples) Not allowed (examples)
+Python socket, ssl, urllib.parse,
+html.parser, xml, gzip, zlib, re,
+threading
+urllib.request, urllib2, urllib3,
+http.client, httplib,
+http.cookiejar, http.cookies,
+cookielib, requests, httpx, aiohttp,
+pycurl, scrapy
+Java java.net.Socket, java.net.URI,
+java.util.zip
+java.net.http.HttpClient,
+HttpURLConnection, URLConnection,
+URL.openConnection(), openStream(),
+getContent(), CookieHandler,
+CookieManager, HttpCookie, OkHttp,
+Apache HttpClient
+C/C++ BSD sockets, zlib, an HTML parser libcurl, cpp-httplib, Boost.Beast HTTP
+Others raw sockets Go net/http, Node
+http/https/fetch/axios, Rust
+reqwest/hyper, shelling out to
+curl/wget
+If you have any questions about the legality of a library, please post them on Canvas. It is much
+safer to ask ahead of time than to turn in code that uses a questionable library and lose points
+after the fact. Submissions are automatically scanned for disallowed libraries.
+7 Implementation Details and Hints
+Your crawler must implement HTTP/1.1 (not 0.9 or 1.0). This means that there are cer-
+tain HTTP headers, like Host, that you must include in your requests (they are required in
+all HTTP/1.1 requests); use Host: sprinter2.cs.vt.edu. We encourage you to implement
+Connection: keep-alive (persistent connections) to improve your crawler’s performance and
+lighten the load on our server, but this is not required, and it is tricky to get right. We also
+encourage you to implement Accept-Encoding: gzip (compressed HTTP responses), since this
+will also improve performance for everyone, but this is also not required. (If you request gzip, a
+response may be both compressed and chunked: reassemble the chunks first, then decompress.) If
+you want to get fancy, you can speed up your crawler using multithreading or multiprocessing, but
+this is not required either — and please keep it to at most 8 simultaneous connections, since
+the server is shared by the whole class (see 503 below).
+3
+CS 4254 Fall 2026 Project 3: Web Crawler
+One of the key differences between HTTP/1.0 and HTTP/1.1 is that the latter supports chunked
+transfer encoding. HTTP/1.1 servers may break up a large response into chunks, and it is the
+client’s responsibility to reconstruct the data by combining the chunks. Our server sends most
+pages chunked, so your client must be able to reconstruct them. Responses that are not chunked
+carry a Content-Length header. To aid in debugging, you might consider using HTTP/1.0 for your
+initial implementation; once you have a working 1.0 implementation, you can switch to 1.1 and add
+support for chunked responses.
+To build a successful web crawler, you will need to handle several different aspects of the HTTP
+protocol:
+• HTTP GET — necessary for downloading HTML pages.
+• HTTP POST — you will need to implement HTTP POST so that your code can log in to
+Fakebook. As shown above, you will pass a username and password to your crawler on the
+command line. The crawler will then use these values as parameters in an HTTP POST in
+order to log in to Fakebook.
+• Cookie Management — Fakebook uses cookies to track logged-in clients. If your crawler
+successfully logs in to Fakebook using an HTTP POST, Fakebook will return a session cookie
+to your crawler. Your crawler should store this cookie and submit it along with each HTTP
+GET request as it crawls Fakebook. The server may send new or updated cookies in any
+response; keep your cookie store up to date. If your crawler fails to handle cookies properly, it
+will not be able to crawl Fakebook successfully.
+In addition to crawling Fakebook, your web crawler must correctly handle HTTP status codes.
+You need to handle 200 OK, since that means everything is okay. Your code must also handle:
+• 301 Moved Permanently and 302 Found — HTTP redirects. Your crawler should try the
+request again using the new URL given by the server in the Location header. (The Location
+may be an absolute URL or a path; handle both.)
+• 403 Forbidden and 404 Not Found — our web server may return these codes to trip up
+your crawler. In this case, your crawler should abandon the URL that generated the error
+code.
+• 500 Internal Server Error — our web server will randomly return this error code to your
+crawler. In this case, your crawler should retry the request for that URL until the request is
+successful.
+• 503 Service Unavailable — the server returns this if a single client sends requests too
+aggressively. Back off briefly, then retry the URL (a well-behaved crawler should never see it).
+I highly recommend the HTTP Made Really Easy tutorial as a starting place for learning about
+the HTTP protocol, along with RFC 9112 (HTTP/1.1 message syntax) for details such as chunked
+encoding. The developer tools built into Chrome and Firefox are both excellent for inspecting
+HTTP requests and responses. In addition to HTTP-specific issues, there are a few key things that
+all web crawlers must do in order to function:
+• Track the Frontier: As your crawler traverses Fakebook it will observe many URLs.
+Typically, these uncrawled URLs are stored in a queue, stack, or list until the crawler is ready
+4
+CS 4254 Fall 2026 Project 3: Web Crawler
+to visit them. These uncrawled URLs are known as the frontier.
+• Watch Out for Loops: Your crawler needs to keep track of where it has been, i.e., the
+URLs that it has already crawled. It isn’t efficient to revisit the same pages over and over
+again. If your crawler does not keep track of where it has been, it will almost certainly enter
+an infinite loop. For example, if users A and B are friends on Fakebook, then A’s page links
+to B, and B’s page links to A. Unless the crawler is smart, it will ping-pong back and forth:
+A→B, B→A, A→B, . . .
+• Only Crawl the Target Domain: Web pages may include links that point to arbitrary
+domains (e.g., a link on google.com that points to cnn.com). Your crawler should only traverse
+URLs that point to pages on sprinter2.cs.vt.edu. For example, it would be valid to
+crawl http://sprinter2.cs.vt.edu/fakebook/018912/, but it would not be valid to crawl
+http://www.facebook.com/018912/. Your code should check that each URL has a valid
+domain (i.e., the domain is sprinter2.cs.vt.edu) before you attempt to visit it.
+8 Logging in to Fakebook
+To write code that can successfully log in to Fakebook, you will need to reverse engineer the HTML
+form on the log-in page. Inspect the form’s code carefully, since it may not be as simple as it initially
+appears. The key acronym you should be on the lookout for is CSRF.
+9 Language
+You can write your code in whatever language you choose, as long as your code compiles and runs
+on unmodified rlogin Linux machines on the command line. Do not use libraries that are
+disallowed for this project. You may use IDEs during development, but do not turn in your IDE
+project without a Makefile, and make sure your code has no dependencies on your IDE. If you use
+an interpreted language, webcrawler may simply be your script (with a correct #! line and execute
+permission), and your Makefile may do nothing more than chmod +x webcrawler.
+10 Submitting Your Project
+To turn in your project, submit your thoroughly documented code along with three other files:
+• A Makefile that compiles your code; after running make, there must be an executable named
+webcrawler in the same directory as the Makefile.
+• A plain-text (no Word or PDF) README.txt file. In this file, briefly describe your high-level
+approach, any challenges you faced, and an overview of how you tested your code.
+• A file called secret_flags. This file should contain the secret flags of all group members, one
+per line, in plain ASCII. For example, a group of two should have a file with exactly ten lines
+in it.
+Put all files in a folder named groupN project3, compress it as groupN project3.tar.gz (e.g.,
+group1project3.tar.gz, where N is your Canvas group number), and submit it through Canvas:
+5
+CS 4254 Fall 2026 Project 3: Web Crawler
+tar -czvf group1project3.tar.gz group1project3/
+Only one group member needs to submit. You must submit your project by 11:59pm on Friday,
+November 20, 2026. Late submissions follow the late policy in the syllabus.
+11 Grading
+This project is worth 10% of your final grade. Grading will cover the following aspects:
+Component Points
+Program functionality (80%)
+Crawler. We run make and then ./webcrawler on rlogin with a
+separate test account (whose flags you do not know), with a time limit
+of 15 minutes. Credit per correct flag printed.
+40
+Secret flags. Your secret_flags file contains every group
+member’s five flags (credit per flag).
+30
+Complete, building submission. Correctly named tarball,
+Makefile, make succeeds, executable webcrawler, README.txt,
+secret_flags.
+10
+Error handling. Status codes, timeouts, malformed responses, bad
+credentials.
+10
+Style and documentation. Readable, well-structured, commented
+code; a useful README.
+10
+Total 100
+In other words, full functionality credit requires that (a) your code compiles, runs, and produces the
+expected output, (b) you have not used any disallowed libraries, and (c) you submit the secret flags
+of all group members. Using a disallowed library results in zero credit for the whole functionality
+portion. Submitting flags that you did not obtain with your own crawler (e.g., another student’s
+flags) is an academic integrity violation. All student code will be checked with plagiarism detection
+software to ensure that students are not copying code from the Internet or from each other. Follow
+the course syllabus regarding collaboration and the use of AI tools.
+6
