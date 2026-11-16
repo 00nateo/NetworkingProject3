@@ -126,12 +126,13 @@ def eprint(*args, **kwargs):
     stdout is reserved for exactly five flag lines (see OUTPUT CONTRACT).
     GET THIS RIGHT EARLY: a stray print() in the crawl loop costs credit.
     """
-    pass
+    kwargs["file"] = sys.stderr
+    print(*args, **kwargs)
 
 
 def log(msg):
     """Timestamped progress line to stderr, e.g. '[crawl] visited=123 queue=456'."""
-    pass
+    eprint(f"[crawler] {msg}")
 
 
 # =============================================================================
@@ -151,7 +152,20 @@ def canonicalize(url, base=None):
 
     This is also the dedupe key for `seen`, so it MUST be deterministic.
     """
-    pass
+    if base is not None:
+        url = urljoin(base, url)
+
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        return None
+
+    scheme = parts.scheme.lower()
+    netloc = parts.netloc.lower()
+    path = parts.path if parts.path else "/"
+    query = parts.query
+    fragment = "" #never sent to server
+
+    return urlunsplit((scheme, netloc, path, query, fragment))
 
 
 def is_target_host(url):
@@ -159,7 +173,9 @@ def is_target_host(url):
 
     TODO: decide how strict to be about ports and 'www.' prefixes.
     """
-    pass
+    parts = urlsplit(url)
+    host = parts.hostname
+    return host is not None and host == TARGET_HOST
 
 
 def in_crawl_scope(url):
@@ -168,7 +184,10 @@ def in_crawl_scope(url):
     This is `is_target_host` AND a path allow-list. The host check satisfies the
     assignment; the path check protects your session and your 15-minute budget.
     """
-    pass
+    if not is_target_host(url):
+        return False
+    parts = urlsplit(url)
+    return parts.path.startswith("/fakebook/")
 
 
 def should_skip(url):
@@ -176,7 +195,9 @@ def should_skip(url):
 
     TODO: extend SKIP_PATH_FRAGMENTS after inspecting real Fakebook links.
     """
-    pass
+    parts = urlsplit(url)
+    return any(fragment in parts.path for fragment in SKIP_PATH_FRAGMENTS)
+    
 
 
 # =============================================================================
@@ -196,11 +217,17 @@ class HTTPResponse:
 
     def __init__(self, status=None, reason="", version="HTTP/1.1",
                  headers=None, set_cookies=None, body=b""):
-        pass
+        self.status = status
+        self.reason = reason
+        self.version = version
+        self.headers = headers if headers is not None else {}
+        self.set_cookies = set_cookies if set_cookies is not None else []
+        self.body = body
+
 
     def header(self, name, default=None):
         """Case-insensitive header lookup (headers dict is stored lower-cased)."""
-        pass
+        return self.headers.get(name.lower(), default)
 
     @property
     def text(self):
@@ -209,7 +236,11 @@ class HTTPResponse:
         TODO: decode using the charset from Content-Type if present, else utf-8
               with errors="replace". Never crash on weird bytes.
         """
-        pass
+        content_type = self.header("content-type", "")
+        charset = "utf-8"
+        if "charset=" in content_type:
+            charset = content_type.split("charset=")[-1].strip()
+        return self.body.decode(charset, errors="replace")
 
     @property
     def is_html(self):
@@ -217,7 +248,10 @@ class HTTPResponse:
 
         Used to skip images/PDFs/etc. before spending time on parsing.
         """
-        pass
+        content_type = self.header("content-type")
+        if content_type is not None:
+            return "html" in content_type.lower()
+        return self.body.lstrip().startswith(b"<")
 
 
 # =============================================================================
@@ -631,7 +665,11 @@ def parse_args(argv):
 
     TODO: exactly two args after the program name; do not accept flags.
     """
-    pass
+    if len(argv) != 3:
+        eprint(f"usage: {argv[0]} [username] [password]")
+        return None
+    return argv[1], argv[2]
+
 
 
 def main(argv):
@@ -645,7 +683,11 @@ def main(argv):
         - missing flags      -> log how many were found to stderr, return 1
         - NOTHING else may be written to stdout, ever.
     """
-    pass
+    info = parse_args(argv)
+    if info is None:
+        return 2
+    username, password = info
+    return 0
 
 
 if __name__ == "__main__":
