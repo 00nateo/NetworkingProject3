@@ -272,7 +272,8 @@ class CookieJar:
     """
 
     def __init__(self):
-        pass
+        self._cookies = {}
+        self._lock = threading.Lock()
 
     def update_from_response(self, set_cookie_values, request_url):
         """Ingest every Set-Cookie header from one response.
@@ -287,7 +288,47 @@ class CookieJar:
             - otherwise store/replace
         Must be thread-safe if S11 is threaded.
         """
-        pass
+        host = urlsplit(request_url).hostname
+        with self._lock:
+            for raw in set_cookie_values:
+                parts = raw.split(";")
+                name, _, value = parts[0].strip().partition("=")
+                name = name.strip()
+                value = value.strip()
+                domain = host
+                path = "/"
+                expires = None
+                delete = False
+
+                for attr in parts[1:]:
+                    attr = attr.strip()
+                    if not attr: 
+                        continue
+                    attr_name, _, attr_value = attr.partition("=")
+                    attr_name = attr_name.strip().lower()
+                    attr_value = attr_value.strip()
+                    if attr_name == "domain" and attr_value:
+                        domain = attr_value.lstrip(".").lower()
+                    elif attr_name == "path" and attr_value:
+                        path = attr_value
+                    elif attr_name == "max-age":
+                        try:
+                            if int(attr_value) <= 0:
+                                delete = True
+                        except ValueError:
+                            pass
+                    elif attr_name == "expires":
+                        pass
+                if delete:
+                    self._cookies.pop(name, None)
+                else:
+                    self._cookies[name] = {
+                            "value": value,
+                            "domain": domain,
+                            "path": path,
+                            "expires": expires,
+                    }
+                        
 
     def header_for(self, url):
         """Build the value for the request's `Cookie:` header, or None.
