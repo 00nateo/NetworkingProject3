@@ -1,11 +1,6 @@
 # CS 4254 Fall 2026 -- Project 3: Web Crawler (Fakebook)
 #
-# Python submission: there is nothing to compile, so `make` only needs to
-# produce an executable named `webcrawler` in this directory (see
-# instructionsp3.txt section 10). We keep the source as webcrawler.py and
-# copy it to ./webcrawler at build time -- copied rather than symlinked so the
-# tarball unpacks correctly on any rlogin machine. A syntax check runs too, so
-# a typo fails `make` instead of 15 minutes into the grading run.
+# Build the executable required by section 10 of instructionsp3.txt.
 
 PYTHON ?= python3
 SRC     = webcrawler.py
@@ -13,11 +8,9 @@ TARGET  = webcrawler
 
 .PHONY: all check run clean FORCE
 
-# Default goal: the grader runs plain `make` and then `./webcrawler`.
 all: $(TARGET)
 
-# FORCE makes this rule run every time, so `make` is always idempotent and
-# never leaves a stale copy behind after you edit the source.
+# Refresh the executable on every build.
 $(TARGET): $(SRC) FORCE
 	@$(PYTHON) -m py_compile $(SRC)
 	@rm -rf __pycache__
@@ -27,7 +20,6 @@ $(TARGET): $(SRC) FORCE
 
 FORCE:
 
-# Optional sanity target: make check
 check:
 	@$(PYTHON) -m py_compile $(SRC)
 	@rm -rf __pycache__
