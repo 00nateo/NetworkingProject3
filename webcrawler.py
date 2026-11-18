@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 """
 CS 4254 Fall 2026 -- Project 3: Web Crawler (Fakebook)
-
-SKELETON ONLY. Every function/method body is intentionally empty (`pass`).
-Fill them in top-to-bottom: this file is ordered so that each section only
-depends on the sections above it.
-
 USAGE (must be exactly this):
     ./webcrawler [username] [password]
 
@@ -23,7 +18,7 @@ LEGALITY (read instructionsp3.txt section 6 -- this is graded, zero credit if vi
     => Every cookie is parsed by hand in CookieJar.
     => urljoin() from urllib.parse is fine and should be used for relative links.
 
-FILE MAP (keep this order):
+FILE MAP:
     S1  imports + constants
     S2  logging helpers
     S3  URL utilities
@@ -37,7 +32,7 @@ FILE MAP (keep this order):
     S11 Crawler               <- frontier, seen-set, workers
     S12 main()                <- argv, orchestration, exact stdout
 
-BUILD ORDER (do not skip ahead; each stage must run before the next):
+BUILD ORDER :
     1. S1/S2/S12  -> `./webcrawler` prints usage to stderr, exits 2.
     2. S3         -> tiny asserts on canonicalize() / in_crawl_scope().
     3. S6         -> smoke-test read_until() against a raw socket.
@@ -49,7 +44,7 @@ BUILD ORDER (do not skip ahead; each stage must run before the next):
     9. S11        -> single-threaded BFS, find 5 flags.
    10. S11        -> add workers (<= 8 total threads), then gzip, then keep-alive.
 
-ERROR / BEHAVIOR MATRIX (implement in Session.fetch, document in README.txt):
+ERROR  (implement in Session.fetch, document in README.txt):
     200              parse body, extract links + flags
     301/302/303/307  follow Location (absolute OR path-only -> urljoin); POST becomes GET;
                      cap at MAX_REDIRECTS to avoid a redirect loop
@@ -238,9 +233,16 @@ class HTTPResponse:
         """
         content_type = self.header("content-type", "")
         charset = "utf-8"
-        if "charset=" in content_type:
-            charset = content_type.split("charset=")[-1].strip()
-        return self.body.decode(charset, errors="replace")
+        for param in content_type.split(";")[1:]:
+            key, _,value = param.partition("=")
+            if key.strip().lower() == "charset":
+                charset = value.strip().strip("\"'")
+                break
+        try:
+            return self.body.decode(charset, errors = "replace")
+        except LookupError:
+            return self.body.decode("utf-8", errors = "replace")
+
 
     @property
     def is_html(self):
@@ -368,7 +370,16 @@ class SocketReader:
         TODO: loop recv(); search self.buf for delim; keep the remainder.
               Raise HTTPParseError/ConnectionError at EOF so S9 can retry.
         """
-        pass
+        while True: 
+            i = self.buf.find(delim)
+            if i != -1:
+                result = self.buf[0:i]
+                self.buf = self.buf[i + len(delim):]
+                return result
+            chunk = self.sock.recv(4096)
+            if not chunk:
+                raise ConnectionError("connection closed while waiting for %r" % (delim,))
+            self.buf += chunk
 
     def read_exact(self, n):
         """Return exactly n bytes (for Content-Length bodies).
@@ -376,15 +387,33 @@ class SocketReader:
         TODO: serve from self.buf first, then recv() until satisfied.
               EOF before n bytes -> raise (truncated response).
         """
-        pass
+        while len(self.buf) < n:
+            chunk = self.sock.recv(4096)
+            if not chunk:
+                raise ConnectionError("connection closed after %d of %d bytes" % (len(self.buf),n))
+            self.buf += chunk
+        result = self.buf[:n]
+        self.buf = self.buf[n:]
+        return result
+
 
     def read_all(self):
         """Read until EOF (used when neither chunked nor Content-Length is set)."""
-        pass
+        out = [self.buf]
+        self.buf = b""
+        while True:
+            chunk = self.sock.recv(4096)
+            if not chunk:
+                break
+            out.append(chunk)
+        return b"".join(out)
 
     def close(self):
         """Close the socket; ignore errors."""
-        pass
+        try:
+            self.sock.close()
+        except OSError:
+            pass
 
 
 # =============================================================================
@@ -426,7 +455,38 @@ class HTTPClient:
               Getting this wrong yields a 400 or an empty reply.
         TODO: Content-Length must be the BYTE length of the encoded body.
         """
-        pass
+        parts = urlsplit(url)
+
+        # The request-target is the *path*, never the full URL.
+        target = parts.path or "/"
+        if parts.query:
+            target += "?" + parts.query
+
+        lines = [
+            "%s %s HTTP/1.1" % (method, target),
+            "Host: %s" % parts.netloc,
+            "User-Agent: %s" % USER_AGENT,
+            "Accept: text/html,application/xhtml+xml,*/*;q=0.8",
+            # Accept-Encoding is deliberately off until decompress() is proven;
+            # re-enable it only after a gzip response round-trips correctly.
+            "Connection: close",
+        ]
+
+        if self.cookie_jar is not None:
+            cookie = self.cookie_jar.header_for(url)
+            if cookie:
+                lines.append("Cookie: %s" % cookie)
+
+        if body is not None:
+            lines.append("Content-Length: %d" % len(body))
+            lines.append("Content-Type: application/x-www-form-urlencoded")
+
+        for name, value in (extra_headers or {}).items():
+            lines.append("%s: %s" % (name, value))
+
+        # Headers are latin-1 per the RFC; the body may be arbitrary bytes.
+        head = ("\r\n".join(lines) + "\r\n\r\n").encode("latin-1")
+        return head + (body or b"")
 
     def open_connection(self, host, port=TARGET_PORT):
         """socket.create_connection + settimeout. Returns the raw socket.
@@ -434,7 +494,9 @@ class HTTPClient:
         TODO: no TLS needed (http://), so skip ssl entirely. If you ever need
               https, wrap with ssl.create_default_context().wrap_socket().
         """
-        pass
+        sock = socket.create_connection((host, port), timeout=SOCKET_TIMEOUT)
+        sock.settimeout(SOCKET_TIMEOUT)
+        return sock
 
     # ---- response side ------------------------------------------------------
     def read_response(self, reader):
@@ -454,7 +516,63 @@ class HTTPClient:
         TODO: tolerate "HTTP/1.0" servers, missing reason phrases, and folded
               headers; raise HTTPParseError on genuine garbage.
         """
-        pass
+        status_line = reader.read_until(b"\r\n")
+        if not status_line:
+            raise HTTPParseError("empty response (connection closed)")
+
+        # "HTTP/1.1 200 OK" -> at most 3 fields; the reason may contain spaces.
+        fields = status_line.decode("latin-1").split(" ", 2)
+        if len(fields) < 2 or not fields[0].startswith("HTTP/"):
+            raise HTTPParseError("bad status line: %r" % (status_line,))
+        version = fields[0]
+        try:
+            status = int(fields[1])
+        except ValueError:
+            raise HTTPParseError("bad status code: %r" % (status_line,))
+        reason = fields[2] if len(fields) > 2 else ""
+
+        headers = {}
+        set_cookies = []            # list, so repeated Set-Cookie is not lost
+        while True:
+            line = reader.read_until(b"\r\n")
+            if not line:            # blank line = end of headers
+                break
+            name, _, value = line.decode("latin-1").partition(":")
+            name = name.strip().lower()
+            value = value.strip()
+            if not name:            # malformed line: skip rather than die
+                continue
+            if name == "set-cookie":
+                set_cookies.append(value)
+                continue
+            if name in headers:
+                headers[name] += ", " + value
+            else:
+                headers[name] = value
+
+        # Body: chunked beats Content-Length when both are present.
+        transfer = headers.get("transfer-encoding", "").lower()
+        if "chunked" in transfer:
+            body = self.read_chunked_body(reader)
+        elif "content-length" in headers:
+            try:
+                length = int(headers["content-length"])
+            except ValueError:
+                raise HTTPParseError("bad Content-Length: %r"
+                                     % (headers["content-length"],))
+            body = reader.read_exact(length)
+        elif status in (204, 304) or 100 <= status < 200:
+            body = b""              # these cannot carry a body
+        else:
+            body = reader.read_all()
+
+        # Decompress AFTER de-chunking: chunking is a transfer encoding,
+        # gzip is a content encoding, and they stack in that order.
+        encoding = headers.get("content-encoding", "").lower()
+        if encoding:
+            body = self.decompress(body, encoding)
+
+        return HTTPResponse(status, reason, version, headers, set_cookies, body)
 
     def read_chunked_body(self, reader):
         """Reassemble a chunked body (RFC 9112 section 7.1).
@@ -469,7 +587,29 @@ class HTTPClient:
         TODO: hex size may have extensions after ';' -- ignore them.
               Do not forget to consume the CRLF after each chunk's data.
         """
-        pass
+        chunks = []
+        while True:
+            size_line = reader.read_until(b"\r\n")
+            if not size_line:
+                raise HTTPParseError("truncated chunked body (no size line)")
+
+            # "1a3;ext=value" -> 0x1a3
+            size_field = size_line.split(b";", 1)[0].strip()
+            try:
+                size = int(size_field, 16)
+            except ValueError:
+                raise HTTPParseError("bad chunk size: %r" % (size_line,))
+
+            if size == 0:           # last chunk; then trailers until blank line
+                while reader.read_until(b"\r\n"):
+                    pass
+                break
+
+            chunks.append(reader.read_exact(size))
+            if reader.read_exact(2) != b"\r\n":
+                raise HTTPParseError("missing CRLF after chunk data")
+
+        return b"".join(chunks)
 
     def decompress(self, body, encoding):
         """Undo Content-Encoding. Handle 'gzip' (and 'deflate' if seen).
@@ -477,7 +617,19 @@ class HTTPClient:
         TODO: gzip.decompress() is fine for a whole-body decode; use zlib with
               wbits=47 if you want to auto-detect gzip/zlib from one call.
         """
-        pass
+        encoding = encoding.strip().lower()
+        try:
+            if encoding in ("gzip", "x-gzip"):
+                return gzip.decompress(body)
+            if encoding == "deflate":
+                try:
+                    return zlib.decompress(body)
+                except zlib.error:
+                    # Some servers send raw deflate with no zlib wrapper.
+                    return zlib.decompress(body, -zlib.MAX_WBITS)
+        except (OSError, zlib.error) as exc:
+            raise HTTPParseError("cannot decode %s body: %s" % (encoding, exc))
+        return body                 # unknown/identity encoding: leave as-is
 
 
 # =============================================================================
