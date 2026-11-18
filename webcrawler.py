@@ -63,6 +63,7 @@ ERROR  (implement in Session.fetch, document in README.txt):
 # TODO: uncomment the imports you actually need as you implement each section.
 # from __future__ import annotations
 
+import calendar      # S5: parse "Expires=Wed, 17 Nov 2027 ..." into epoch seconds
 import gzip          # S7: decompress Content-Encoding: gzip
 import re            # S8: flag pattern; S10: hidden input scraping
 import socket        # S6: the only way bytes reach the network
@@ -259,6 +260,54 @@ class HTTPResponse:
 # =============================================================================
 # S5. COOKIE JAR  (hand-written: http.cookiejar is BANNED)
 # =============================================================================
+_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+
+def parse_http_date(value):
+    """Parse an HTTP date into epoch seconds, or return None.
+
+    Only the RFC 1123 form is handled, because that is what Set-Cookie uses in
+    practice: "Wed, 17 Nov 2027 20:17:15 GMT". Written by hand rather than with
+    email.utils so the file stays free of anything that looks like an HTTP or
+    cookie library.
+    """
+    try:
+        fields = value.replace(",", " ").split()
+        # ['Wed', '17', 'Nov', '2027', '20:17:15', 'GMT']
+        day = int(fields[1])
+        month = _MONTHS[fields[2][:3].lower()]
+        year = int(fields[3])
+        hour, minute, second = (int(x) for x in fields[4].split(":"))
+    except (IndexError, KeyError, ValueError):
+        return None
+    return calendar.timegm((year, month, day, hour, minute, second, 0, 0, 0))
+
+
+def domain_matches(host, domain):
+    """RFC 6265 5.1.3: exact host, or a suffix of it on a '.' boundary."""
+    host = (host or "").lower()
+    domain = (domain or "").lower().lstrip(".")
+    return host == domain or host.endswith("." + domain)
+
+
+def path_matches(request_path, cookie_path):
+    """RFC 6265 5.1.4: cookie path is a prefix, on a '/' boundary or exactly."""
+    if not request_path:
+        request_path = "/"
+    if not cookie_path:
+        cookie_path = "/"
+    if request_path == cookie_path:
+        return True
+    if not request_path.startswith(cookie_path):
+        return False
+    if cookie_path.endswith("/"):
+        return True
+    return request_path[len(cookie_path)] == "/"
+
+
 class CookieJar:
     """Minimal RFC 6265-ish store.
 
@@ -271,6 +320,9 @@ class CookieJar:
         self._cookies: dict[name] = {"value": str, "domain": str,
                                      "path": str, "expires": float|None}
         self._lock: threading.Lock (S11 reads this from many threads)
+
+    Every cookie is keyed by name only -- fine for a single-host crawl
+    (sprinter2.cs.vt.edu), and it keeps the store trivially readable.
     """
 
     def __init__(self):
@@ -280,15 +332,13 @@ class CookieJar:
     def update_from_response(self, set_cookie_values, request_url):
         """Ingest every Set-Cookie header from one response.
 
-        TODO: for each raw value:
-            - split on ';' -> first part is name=value, rest are attributes
-            - parse attributes case-insensitively: Domain, Path, Expires,
-              Max-Age, Secure, HttpOnly, SameSite
-            - default Domain = request host, default Path = "/" (or the
-              directory of the request path -- pick one and be consistent)
-            - Max-Age <= 0 or Expires in the past -> DELETE the stored cookie
-            - otherwise store/replace
-        Must be thread-safe if S11 is threaded.
+        Per cookie:
+            - first ';'-separated field is name=value, the rest are attributes
+            - Domain / Path override the defaults (request host, "/")
+            - Max-Age wins over Expires when both are present (RFC 6265 5.3)
+            - Max-Age <= 0, or an Expires in the past, DELETES the cookie
+            - otherwise store / replace
+        Must be thread-safe: S11 reads this from many threads.
         """
         host = urlsplit(request_url).hostname
         with self._lock:
@@ -297,14 +347,16 @@ class CookieJar:
                 name, _, value = parts[0].strip().partition("=")
                 name = name.strip()
                 value = value.strip()
+                if not name:
+                    continue
                 domain = host
                 path = "/"
-                expires = None
-                delete = False
+                expires_attr = None
+                max_age = None
 
                 for attr in parts[1:]:
                     attr = attr.strip()
-                    if not attr: 
+                    if not attr:
                         continue
                     attr_name, _, attr_value = attr.partition("=")
                     attr_name = attr_name.strip().lower()
@@ -315,12 +367,24 @@ class CookieJar:
                         path = attr_value
                     elif attr_name == "max-age":
                         try:
-                            if int(attr_value) <= 0:
-                                delete = True
+                            max_age = int(attr_value)
                         except ValueError:
                             pass
                     elif attr_name == "expires":
-                        pass
+                        expires_attr = parse_http_date(attr_value)
+
+                # RFC 6265 5.3: Max-Age wins over Expires when both are sent.
+                # This is decided AFTER the loop so attribute order cannot matter.
+                if max_age is not None:
+                    expires = None if max_age <= 0 else time.time() + max_age
+                    delete = max_age <= 0
+                elif expires_attr is not None:
+                    expires = expires_attr
+                    delete = expires_attr <= time.time()
+                else:
+                    expires = None      # session cookie: lives until we exit
+                    delete = False
+
                 if delete:
                     self._cookies.pop(name, None)
                 else:
@@ -335,15 +399,38 @@ class CookieJar:
     def header_for(self, url):
         """Build the value for the request's `Cookie:` header, or None.
 
-        TODO: join "name=value" for cookies whose domain/path match `url`
-              and which are not expired, separated by "; ".
-              Ordering does not matter to Django, but be deterministic.
+        Only cookies that are unexpired, whose domain matches the request host,
+        and whose path is a prefix of the request path are sent. Sorted by name
+        so the header is byte-identical across runs (easier to diff in logs).
         """
-        pass
+        parts = urlsplit(url)
+        host = (parts.hostname or "").lower()
+        path = parts.path or "/"
+        now = time.time()
+
+        pairs = []
+        with self._lock:
+            for name in sorted(self._cookies):
+                cookie = self._cookies[name]
+                if cookie["expires"] is not None and cookie["expires"] <= now:
+                    continue                        # expired: never send
+                if not domain_matches(host, cookie["domain"]):
+                    continue
+                if not path_matches(path, cookie["path"]):
+                    continue
+                pairs.append("%s=%s" % (name, cookie["value"]))
+
+        return "; ".join(pairs) if pairs else None
 
     def clear(self):
         """Forget everything (useful between tests)."""
-        pass
+        with self._lock:
+            self._cookies.clear()
+
+    def names(self):
+        """Sorted cookie names currently held -- handy for tests and logging."""
+        with self._lock:
+            return sorted(self._cookies)
 
 
 # =============================================================================
