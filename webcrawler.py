@@ -470,27 +470,56 @@ class PageParser(HTMLParser):
         self.flags = []
         self._in_flag_tag = False
         self._flag_buffer = []
+        self.inputs = {}
 
     def reset_state(self):
         """Clear collected data so the instance can be reused."""
-        pass
+        self.links = []
+        self.flags = []
+        self.inputs = {}
+        self._in_flag_tag = False
+        self._flag_buffer = []
 
     def handle_starttag(self, tag, attrs):
         """TODO: Collect links and form fields, and start buffering text in flag headings."""
-        pass
+        attrs = dict(attrs)
+
+        if tag == "a":
+            href = attrs.get("href")
+            if href:
+                self.links.append(urljoin(self.base_url, href) if self.base_url else href)
+        elif tag == "h2":
+            classes = attrs.get("class", "").split()
+            if "secret_flag" in classes:
+                self._in_flag_tag = True
+                self._flag_buffer = []
+        elif tag == "input":
+            name = attrs.get("name")
+            if name:
+                self.inputs[name] = attrs.get("value", "")
 
     def handle_endtag(self, tag):
         """TODO: Match FLAG_RE against the buffered text when a flag heading closes."""
-        pass
+        if tag == "h2" and self._in_flag_tag:
+            text = "".join(self._flag_buffer)
+            match = FLAG_RE.search(text)
+            if match:
+                self.flags.append(match.group(1))
+            self._in_flag_tag = False
+            self._flag_buffer = []
 
     def handle_data(self, data):
         """TODO: Buffer flag text across parser callbacks."""
-        pass
+        if self._in_flag_tag:
+            self._flag_buffer.append(data)
 
 
 def extract_form_fields(html):
     """TODO: Collect input names and values, including hidden login fields."""
-    pass
+    parser = PageParser()
+    parser.feed(html)
+    parser.close()
+    return parser.inputs
 
 
 class Session:
@@ -501,8 +530,8 @@ class Session:
         self.client = HTTPClient(self.jar)
         self.requests_made = 0
 
-    def fetch(self, url, method="GET", form=None, redirects=0):
-        """TODO: Fetch a URL and return its 200 response or None.
+    def fetch(self, url, method="GET", form=None, redirects=0, extra_headers=None):
+        """Fetch a URL and return its 200 response or None.
 
         Update cookies after each response. Resolve redirects against the current
         URL, check the target host, and cap the redirect chain. A 302 or 303
@@ -511,29 +540,113 @@ class Session:
         Skip 403 and 404 responses. Retry 500 responses, back off on 503,
         and retry transient connection and parse errors.
         """
-        pass
+        attempt = 0
+        while attempt < MAX_ATTEMPTS:
+            try:
+                parts = urlsplit(url)
+                sock = self.client.open_connection(parts.hostname, parts.port or TARGET_PORT)
+                reader = SocketReader(sock)
+                request_bytes = self.client.build_request(method, url, extra_headers=extra_headers, body=form)
+                sock.sendall(request_bytes)
+                resp = self.client.read_response(reader)
+                reader.close()
+            except (OSError, HTTPParseError) as exc:
+                log(f"transport error on {url}: {exc}")
+                attempt += 1
+                self.backoff(attempt)
+                continue
+
+            self.requests_made += 1
+            self.jar.update_from_response(resp.set_cookies, url)
+
+            if resp.status in (301, 302, 303, 307):
+                if redirects >= MAX_REDIRECTS:
+                    log(f"too many redirects for {url}")
+                    return None
+                location = resp.header("location")
+                if not location:
+                    log(f"redirect with no Location header: {url}")
+                    return None
+                target = canonicalize(location, base=url)
+                if target is None:
+                    return None
+                if method == "POST":
+                    return self.fetch(target, "GET", None, redirects + 1)
+                return self.fetch(target, method, form, redirects + 1)
+
+            if resp.status == 200:
+                return resp
+
+            if resp.status in (403, 404):
+                log(f"{resp.status} on {url}, abandoning")
+                return None
+
+            if resp.status == 500:
+                log(f"500 on {url}, retrying")
+                attempt += 1
+                self.backoff(attempt)
+                continue
+
+            if resp.status == 503:
+                log(f"503 on {url}, backing off harder")
+                attempt += 1
+                self.backoff(attempt + 2)
+                continue
+
+            log(f"unhandled status {resp.status} on {url}, abandoning")
+            return None
+
+        log(f"giving up on {url} after {MAX_ATTEMPTS} attempts")
+        return None
+
 
     def post_form(self, url, fields):
         """TODO: URL-encode the fields and send a POST with Referer and Origin."""
-        pass
+        body = urlencode(fields).encode("ascii")
+        headers = {
+            "Referer": url,
+            "Origin": "http://%s" % TARGET_HOST,
+        }
+        return self.fetch(url, method="POST", form=body, extra_headers=headers)
 
     def backoff(self, attempt):
-        """TODO: Sleep for a capped exponential delay and log the retry."""
-        pass
+        delay = min(BACKOFF_BASE * (2 ** attempt), 30.0)
+        log(f"backing off {delay:.1f}s (attempt {attempt})")
+        time.sleep(delay)
 
 
 def login(session, username, password):
-    """TODO: Fetch the login form and submit the credentials with its hidden fields.
+    login_page = session.fetch(LOGIN_URL)
+    if login_page is None:
+        eprint("could not load login page")
+        return False
 
-    Preserve the CSRF cookie and form token, then check for a sessionid
-    cookie and verify that the Fakebook home page is accessible.
-    """
-    pass
+    fields = extract_form_fields(login_page.text)
+    fields["username"] = username
+    fields["password"] = password
+
+    resp = session.post_form(LOGIN_URL, fields)
+    if resp is None:
+        eprint("login POST failed")
+        return False
+
+    if "sessionid" not in session.jar.names():
+        eprint("login failed: no sessionid cookie, check username/password")
+        return False
+
+    if not is_logged_in(session):
+        eprint("login failed: still on login page after posting credentials")
+        return False
+
+    return True
 
 
 def is_logged_in(session):
-    """TODO: Fetch the home page and check whether it leads back to login."""
-    pass
+    resp = session.fetch(BASE_URL)
+    if resp is None:
+        return False
+    fields = extract_form_fields(resp.text)
+    return "password" not in fields
 
 
 class Crawler:
@@ -551,31 +664,79 @@ class Crawler:
         self.flags = []
         self.lock = threading.Lock()
         self.cond = threading.Condition(self.lock)
+        self.active = 0
 
     def run(self, start_url=BASE_URL):
-        """TODO: Seed the frontier, start and join the workers, and return the flags."""
-        pass
+        with self.lock:
+            self._enqueue(start_url)
+
+        threads = []
+        for worker_id in range(self.workers):
+            t = threading.Thread(target=self._worker, args=(worker_id,))
+            t.start()
+            threads.append(t)
+
+        for t in threads:
+            t.join()
+
+        return self.flags
 
     def _worker(self, worker_id):
-        """TODO: Fetch pages outside the lock and record their links and flags under it."""
-        pass
+        while True:
+            with self.lock:
+                while not self.frontier and self.active > 0 and not self.done:
+                    self.cond.wait()
+
+                if self.done or not self.frontier:
+                    self.cond.notify_all()
+                    return
+
+                url = self.frontier.popleft()
+                self.active += 1
+
+            resp = self.session.fetch(url)
+
+            links = []
+            flags = []
+            if resp is not None and resp.is_html:
+                parser = PageParser(base_url=url)
+                parser.feed(resp.text)
+                parser.close()
+                links = parser.links
+                flags = parser.flags
+
+            with self.lock:
+                self._record_flags(flags)
+                for link in links:
+                    self._enqueue(link)
+                self.active -= 1
+                self.cond.notify_all()
 
     def _enqueue(self, url):
-        """TODO: Queue unseen, in-scope URLs. The caller holds the lock."""
-        pass
+        target = canonicalize(url, base=BASE_URL)
+        if target is None:
+            return
+        if not in_crawl_scope(target):
+            return
+        if should_skip(target):
+            return
+        if target in self.seen:
+            return
+        self.seen.add(target)
+        self.frontier.append(target)
 
     def _record_flags(self, flags):
-        """TODO: Record unique flags and log progress."""
-        pass
+        for flag in flags:
+            if flag not in self.flags:
+                self.flags.append(flag)
+                log(f"found {len(self.flags)}/{FLAGS_WANTED} flags")
 
     @property
     def done(self):
-        """True when enough flags have been found."""
-        pass
+        return len(self.flags) >= FLAGS_WANTED
 
     def stats(self):
-        """Return (visited, queued, flags) for progress logging."""
-        pass
+        return len(self.seen), len(self.frontier), len(self.flags)
 
 
 def parse_args(argv):
@@ -587,11 +748,26 @@ def parse_args(argv):
 
 
 def main(argv):
-    """TODO: Log in, crawl, and print exactly five flags on success."""
     info = parse_args(argv)
     if info is None:
         return 2
     username, password = info
+
+    session = Session()
+    if not login(session, username, password):
+        eprint("login failed")
+        return 1
+
+    crawler = Crawler(session)
+    flags = crawler.run()
+
+    if len(flags) < FLAGS_WANTED:
+        eprint(f"only found {len(flags)}/{FLAGS_WANTED} flags")
+        return 1
+
+    for flag in flags[:FLAGS_WANTED]:
+        print(flag)
+
     return 0
 
 
