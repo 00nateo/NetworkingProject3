@@ -530,7 +530,7 @@ class Session:
         self.client = HTTPClient(self.jar)
         self.requests_made = 0
 
-    def fetch(self, url, method="GET", form=None, redirects=0, extra_headers=None):
+    def fetch(self, url, method="GET", form=None, redirects=0, extra_headers=None, should_stop=None):
         """Fetch a URL and return its 200 response or None.
 
         Update cookies after each response. Resolve redirects against the current
@@ -542,6 +542,9 @@ class Session:
         """
         attempt = 0
         while attempt < MAX_ATTEMPTS:
+            if should_stop is not None and should_stop():
+                log(f"stopping retry of {url}, crawl already has enough flags")
+                return None
             try:
                 parts = urlsplit(url)
                 sock = self.client.open_connection(parts.hostname, parts.port or TARGET_PORT)
@@ -694,7 +697,7 @@ class Crawler:
                 url = self.frontier.popleft()
                 self.active += 1
 
-            resp = self.session.fetch(url)
+            resp = self.session.fetch(url, should_stop=lambda: self.done)
 
             links = []
             flags = []
