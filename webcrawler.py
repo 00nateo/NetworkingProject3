@@ -540,19 +540,28 @@ class Session:
         Skip 403 and 404 responses. Retry 500 responses, back off on 503,
         and retry transient connection and parse errors.
         """
+        if not is_target_host(url):
+            log(f"skipping URL outside Fakebook: {url}")
+            return None
+
         attempt = 0
+        server_errors = 0
         while attempt < MAX_ATTEMPTS:
             if should_stop is not None and should_stop():
                 log(f"stopping retry of {url}, crawl already has enough flags")
                 return None
             try:
                 parts = urlsplit(url)
+                request_bytes = self.client.build_request(
+                    method, url, extra_headers=extra_headers, body=form
+                )
                 sock = self.client.open_connection(parts.hostname, parts.port or TARGET_PORT)
                 reader = SocketReader(sock)
-                request_bytes = self.client.build_request(method, url, extra_headers=extra_headers, body=form)
-                sock.sendall(request_bytes)
-                resp = self.client.read_response(reader)
-                reader.close()
+                try:
+                    sock.sendall(request_bytes)
+                    resp = self.client.read_response(reader)
+                finally:
+                    reader.close()
             except (OSError, HTTPParseError) as exc:
                 log(f"transport error on {url}: {exc}")
                 attempt += 1
@@ -574,8 +583,8 @@ class Session:
                 if target is None:
                     return None
                 if method == "POST":
-                    return self.fetch(target, "GET", None, redirects + 1)
-                return self.fetch(target, method, form, redirects + 1)
+                    return self.fetch(target, "GET", None, redirects + 1, should_stop=should_stop)
+                return self.fetch(target, method, form, redirects + 1, should_stop=should_stop)
 
             if resp.status == 200:
                 return resp
@@ -586,8 +595,8 @@ class Session:
 
             if resp.status == 500:
                 log(f"500 on {url}, retrying")
-                attempt += 1
-                self.backoff(attempt)
+                server_errors = min(server_errors + 1, 5)
+                self.backoff(server_errors)
                 continue
 
             if resp.status == 503:
