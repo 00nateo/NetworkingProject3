@@ -2,7 +2,7 @@ PYTHON ?= python3
 SRC     = webcrawler.py
 TARGET  = webcrawler
 
-.PHONY: all check run clean
+.PHONY: all run clean
 
 all: $(TARGET)
 
