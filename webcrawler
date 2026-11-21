@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""CS 4254 Project 3: Fakebook crawler. See instructionsp3.txt for requirements."""
-
+# CS 4254 Project 3: Fakebook crawler.
 
 import calendar
 import gzip
@@ -45,7 +44,7 @@ SKIP_PATH_FRAGMENTS = (
 
 
 def eprint(*args, **kwargs):
-    """Write to stderr so stdout stays available for flags."""
+    # Write to stderr so stdout stays available for flags.
     kwargs["file"] = sys.stderr
     print(*args, **kwargs)
 
@@ -55,7 +54,7 @@ def log(msg):
 
 
 def canonicalize(url, base=None):
-    """Resolve relative URLs and drop fragments while keeping query strings."""
+    # Resolve relative URLs and drop fragments while keeping query strings.
     if base is not None:
         url = urljoin(base, url)
 
@@ -77,7 +76,7 @@ def is_target_host(url):
 
 
 def in_crawl_scope(url):
-    """Keep the crawl on the target host under /fakebook/."""
+    # Keep the crawl on the target host under /fakebook/.
     if not is_target_host(url):
         return False
     parts = urlsplit(url)
@@ -90,7 +89,7 @@ def should_skip(url):
 
 
 class HTTPResponse:
-    """Parsed HTTP response with Set-Cookie values kept in arrival order."""
+    # Parsed HTTP response with Set-Cookie values kept in arrival order.
 
     def __init__(self, status=None, reason="", version="HTTP/1.1",
                  headers=None, set_cookies=None, body=b""):
@@ -106,7 +105,7 @@ class HTTPResponse:
 
     @property
     def text(self):
-        """Decode the body using the declared charset, with a UTF-8 fallback."""
+        # Decode the body using the declared charset, with a UTF-8 fallback.
         content_type = self.header("content-type", "")
         charset = "utf-8"
         for param in content_type.split(";")[1:]:
@@ -121,7 +120,7 @@ class HTTPResponse:
 
     @property
     def is_html(self):
-        """Use Content-Type when present, otherwise look for HTML markup."""
+        # Use Content-Type when present, otherwise look for HTML markup.
         content_type = self.header("content-type")
         if content_type is not None:
             return "html" in content_type.lower()
@@ -135,10 +134,9 @@ _MONTHS = {
 
 
 def parse_http_date(value):
-    """Parse an RFC 1123 date into epoch seconds."""
+    # Parse an RFC 1123 date into epoch seconds
     try:
         fields = value.replace(",", " ").split()
-        # ['Wed', '17', 'Nov', '2027', '20:17:15', 'GMT']
         day = int(fields[1])
         month = _MONTHS[fields[2][:3].lower()]
         year = int(fields[3])
@@ -149,14 +147,14 @@ def parse_http_date(value):
 
 
 def domain_matches(host, domain):
-    """RFC 6265 5.1.3: exact host, or a suffix of it on a '.' boundary."""
+    # exact host, or a suffix of it on a '.' boundary.
     host = (host or "").lower()
     domain = (domain or "").lower().lstrip(".")
     return host == domain or host.endswith("." + domain)
 
 
 def path_matches(request_path, cookie_path):
-    """RFC 6265 5.1.4: cookie path is a prefix, on a '/' boundary or exactly."""
+    # cookie path is a prefix, on a '/' boundary or exactly
     if not request_path:
         request_path = "/"
     if not cookie_path:
@@ -171,14 +169,14 @@ def path_matches(request_path, cookie_path):
 
 
 class CookieJar:
-    """Thread-safe cookie store keyed by name for the single-host crawl."""
+    # Thread-safe cookie store keyed by name for the single-host crawl
 
     def __init__(self):
         self._cookies = {}
         self._lock = threading.Lock()
 
     def update_from_response(self, set_cookie_values, request_url):
-        """Store or expire cookies from the response."""
+        # Store or expire cookies from the response
         host = urlsplit(request_url).hostname
         with self._lock:
             for raw in set_cookie_values:
@@ -212,7 +210,7 @@ class CookieJar:
                     elif attr_name == "expires":
                         expires_attr = parse_http_date(attr_value)
 
-                # RFC 6265 5.3: Max-Age wins over Expires when both are sent.
+                #  Max-Age wins over Expires when both are sent
                 if max_age is not None:
                     expires = None if max_age <= 0 else time.time() + max_age
                     delete = max_age <= 0
@@ -220,7 +218,7 @@ class CookieJar:
                     expires = expires_attr
                     delete = expires_attr <= time.time()
                 else:
-                    expires = None      # session cookie: lives until we exit
+                    expires = None      # session cookie lives until we exit
                     delete = False
 
                 if delete:
@@ -234,7 +232,7 @@ class CookieJar:
                     }
 
     def header_for(self, url):
-        """Return matching, unexpired cookies in name order."""
+        # Return matching, unexpired cookies in name order
         parts = urlsplit(url)
         host = (parts.hostname or "").lower()
         path = parts.path or "/"
@@ -264,14 +262,15 @@ class CookieJar:
 
 
 class SocketReader:
-    """Buffer bytes that a socket read returns past the current delimiter or length."""
+    # buffer bytes that a socket read returns past the current delimiter or length
 
     def __init__(self, sock):
         self.sock = sock
-        self.buf = b""      # bytes received but not yet consumed
+        # bytes received but not yet consumed
+        self.buf = b""      
 
     def read_until(self, delim):
-        """Read through the delimiter and return the bytes before it."""
+        # Read through the delimiter and return the bytes before it
         while True:
             i = self.buf.find(delim)
             if i != -1:
@@ -284,7 +283,7 @@ class SocketReader:
             self.buf += chunk
 
     def read_exact(self, n):
-        """Read n bytes or raise if the connection closes early."""
+        #Read n bytes or raise if the connection closes early
         while len(self.buf) < n:
             chunk = self.sock.recv(4096)
             if not chunk:
@@ -295,7 +294,8 @@ class SocketReader:
         return result
 
     def read_all(self):
-        """Read until EOF (used when neither chunked nor Content-Length is set)."""
+        #Read until EOF 
+        #used when neither chunked nor Content-Length is set
         out = [self.buf]
         self.buf = b""
         while True:
@@ -306,7 +306,7 @@ class SocketReader:
         return b"".join(out)
 
     def close(self):
-        """Close the socket; ignore errors."""
+        #close the socket
         try:
             self.sock.close()
         except OSError:
@@ -314,12 +314,11 @@ class SocketReader:
 
 
 class HTTPParseError(Exception):
-    """Raised when the peer sends something that is not valid HTTP."""
     pass
 
 
 class HTTPClient:
-    """Build HTTP requests and parse responses. The session manages cookies."""
+    #build HTTP requests and parse response
 
     def __init__(self, cookie_jar=None):
         self.cookie_jar = cookie_jar
@@ -364,7 +363,7 @@ class HTTPClient:
         if not status_line:
             raise HTTPParseError("empty response (connection closed)")
 
-        # "HTTP/1.1 200 OK" -> at most 3 fields; the reason may contain spaces.
+        # "HTTP/1.1 200 OK" -> at most 3 fields
         fields = status_line.decode("latin-1").split(" ", 2)
         if len(fields) < 2 or not fields[0].startswith("HTTP/"):
             raise HTTPParseError("bad status line: %r" % (status_line,))
@@ -376,7 +375,7 @@ class HTTPClient:
         reason = fields[2] if len(fields) > 2 else ""
 
         headers = {}
-        set_cookies = []            # list, so repeated Set-Cookie is not lost
+        set_cookies = []            # list so repeated Set-Cookie is not lost
         while True:
             line = reader.read_until(b"\r\n")
             if not line:
@@ -394,7 +393,8 @@ class HTTPClient:
             else:
                 headers[name] = value
 
-        # Body: chunked beats Content-Length when both are present.
+        # Body
+        #chunked beats Content-Length when both are present
         transfer = headers.get("transfer-encoding", "").lower()
         if "chunked" in transfer:
             body = self.read_chunked_body(reader)
@@ -406,11 +406,12 @@ class HTTPClient:
                                      % (headers["content-length"],))
             body = reader.read_exact(length)
         elif status in (204, 304) or 100 <= status < 200:
-            body = b""              # these cannot carry a body
+            body = b""              
+            #these cannot carry a body
         else:
             body = reader.read_all()
 
-        # Decode content after removing the transfer framing.
+        #Decode content after removing the transfer framing
         encoding = headers.get("content-encoding", "").lower()
         if encoding:
             body = self.decompress(body, encoding)
@@ -418,7 +419,7 @@ class HTTPClient:
         return HTTPResponse(status, reason, version, headers, set_cookies, body)
 
     def read_chunked_body(self, reader):
-        """Reassemble chunks and consume the trailers (RFC 9112, section 7.1)."""
+        # Reassemble chunks and consume the trailers 
         chunks = []
         while True:
             size_line = reader.read_until(b"\r\n")
@@ -432,7 +433,7 @@ class HTTPClient:
             except ValueError:
                 raise HTTPParseError("bad chunk size: %r" % (size_line,))
 
-            if size == 0:           # last chunk; then trailers until blank line
+            if size == 0:           # last chunk then trailers until blank line
                 while reader.read_until(b"\r\n"):
                     pass
                 break
@@ -444,7 +445,7 @@ class HTTPClient:
         return b"".join(chunks)
 
     def decompress(self, body, encoding):
-        """Decode gzip and deflate bodies."""
+        #decode gzip and deflate bodies
         encoding = encoding.strip().lower()
         try:
             if encoding in ("gzip", "x-gzip"):
@@ -453,27 +454,27 @@ class HTTPClient:
                 try:
                     return zlib.decompress(body)
                 except zlib.error:
-                    # Some servers send raw deflate with no zlib wrapper.
+                    # Some servers send raw deflate with no zlib wrapper
                     return zlib.decompress(body, -zlib.MAX_WBITS)
         except (OSError, zlib.error) as exc:
             raise HTTPParseError("cannot decode %s body: %s" % (encoding, exc))
-        return body                 # unknown/identity encoding: leave as-is
+        return body                 
 
 
 class PageParser(HTMLParser):
-    """Collect links and secret flags from one HTML page."""
+    #collect links and secret flags from one HTML page
 
     def __init__(self, base_url=None):
         super().__init__(convert_charrefs=True)
         self.base_url = base_url
-        self.links = []       # absolute-or-raw hrefs, deduped later
+        self.links = []       
         self.flags = []
         self._in_flag_tag = False
         self._flag_buffer = []
         self.inputs = {}
 
     def reset_state(self):
-        """Clear collected data so the instance can be reused."""
+        #clear collected data so the instance can be reused
         self.links = []
         self.flags = []
         self.inputs = {}
@@ -481,7 +482,6 @@ class PageParser(HTMLParser):
         self._flag_buffer = []
 
     def handle_starttag(self, tag, attrs):
-        """TODO: Collect links and form fields, and start buffering text in flag headings."""
         attrs = dict(attrs)
 
         if tag == "a":
@@ -499,7 +499,6 @@ class PageParser(HTMLParser):
                 self.inputs[name] = attrs.get("value", "")
 
     def handle_endtag(self, tag):
-        """TODO: Match FLAG_RE against the buffered text when a flag heading closes."""
         if tag == "h2" and self._in_flag_tag:
             text = "".join(self._flag_buffer)
             match = FLAG_RE.search(text)
@@ -509,13 +508,11 @@ class PageParser(HTMLParser):
             self._flag_buffer = []
 
     def handle_data(self, data):
-        """TODO: Buffer flag text across parser callbacks."""
         if self._in_flag_tag:
             self._flag_buffer.append(data)
 
 
 def extract_form_fields(html):
-    """TODO: Collect input names and values, including hidden login fields."""
     parser = PageParser()
     parser.feed(html)
     parser.close()
@@ -523,7 +520,7 @@ def extract_form_fields(html):
 
 
 class Session:
-    """Manage cookies, redirects, and retries for HTTP requests."""
+    # Manage cookies, redirects, and retries for HTTP requests
 
     def __init__(self):
         self.jar = CookieJar()
@@ -531,15 +528,16 @@ class Session:
         self.requests_made = 0
 
     def fetch(self, url, method="GET", form=None, redirects=0, extra_headers=None, should_stop=None):
-        """Fetch a URL and return its 200 response or None.
-
-        Update cookies after each response. Resolve redirects against the current
-        URL, check the target host, and cap the redirect chain. A 302 or 303
-        after a POST should continue as a GET without the form body.
-
-        Skip 403 and 404 responses. Retry 500 responses, back off on 503,
-        and retry transient connection and parse errors.
-        """
+        #Fetch a URL and return its 200 response or None.
+        #
+        #Update cookies after each response Resolve redirects against the current
+        #URL then check the target host, and cap the redirect chain
+        #302 or 303 after a POST should continue as a GET without the form body.
+        #
+        #Skip 403 and 404 responses
+        #Retry 500 responses, back off on 503,
+        #and retry transient connection and parse errors.
+        #
         if not is_target_host(url):
             log(f"skipping URL outside Fakebook: {url}")
             return None
@@ -583,6 +581,7 @@ class Session:
                 if target is None:
                     return None
                 if method == "POST":
+                    #should_stop
                     return self.fetch(target, "GET", None, redirects + 1, should_stop=should_stop)
                 return self.fetch(target, method, form, redirects + 1, should_stop=should_stop)
 
@@ -613,7 +612,6 @@ class Session:
 
 
     def post_form(self, url, fields):
-        """TODO: URL-encode the fields and send a POST with Referer and Origin."""
         body = urlencode(fields).encode("ascii")
         headers = {
             "Referer": url,
@@ -662,11 +660,9 @@ def is_logged_in(session):
 
 
 class Crawler:
-    """Breadth-first crawl over Fakebook.
-
-    Use the condition to guard the frontier, seen URLs, and flags. Workers
-    should wait if the queue is empty while a fetch is still in progress.
-    """
+    # Use the condition to guard the frontier, seen URLs, and flags. 
+    #Workers should wait if the queue is empty while a fetch is still in progress
+    
 
     def __init__(self, session, workers=NUM_WORKERS):
         self.session = session
@@ -752,7 +748,7 @@ class Crawler:
 
 
 def parse_args(argv):
-    """Return the credentials or print usage and return None."""
+    # Return the credentials or print usage and return None
     if len(argv) != 3:
         eprint(f"usage: {argv[0]} [username] [password]")
         return None

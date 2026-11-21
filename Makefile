@@ -11,7 +11,7 @@ $(TARGET): $(SRC)
 	@rm -rf __pycache__
 	@cp $(SRC) $(TARGET)
 	@chmod +x $(TARGET)
-	@echo "made ./$(TARGET) -- run ./$(TARGET) [username] [password]"
+	@echo "run ./$(TARGET) [username] [password]"
 
 
 run: all
